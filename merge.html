@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BasketFlow - Video Merge</title>
+    <!-- Fix for FFmpeg.wasm on GitHub Pages (Cross-Origin Isolation) -->
+    <script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@latest/coi-serviceworker.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -135,7 +137,7 @@
         async function loadFFmpeg() {
             if (ffmpegInstance) return ffmpegInstance;
 
-            updateStatus('📥', 'Loading FFmpeg (~32MB)...', 10);
+            updateStatus('📥', 'Loading FFmpeg Engine...', 10);
 
             const ffmpeg = new FFmpeg();
 
@@ -143,36 +145,44 @@
                 updateStatus('🔄', `Merging: ${Math.round(progress * 100)}%`, 50 + progress * 40);
             });
 
+            ffmpeg.on('log', ({ message }) => {
+                console.log('[FFMPEG LOG]', message);
+            });
+
             try {
                 const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
                 const workerURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js';
 
-                console.log('[MERGE_PAGE] Fetching core files as Blobs...');
+                console.log('[MERGE_PAGE] Fetching dependencies...');
+                updateStatus('📥', 'Downloading core files...', 15);
 
                 const [coreBlob, wasmBlob, workerBlob] = await Promise.all([
                     toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
                     toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
                     toBlobURL(workerURL, 'text/javascript')
-                ]);
+                ]).catch(err => {
+                    console.error('[MERGE_PAGE] Download failed:', err);
+                    throw new Error('Failed to download FFmpeg files (404?). Check your internet.');
+                });
 
-                console.log('[MERGE_PAGE] Core files fetched. Loading FFmpeg...');
+                console.log('[MERGE_PAGE] Dependencies ready. Initializing (Single-Threaded)...');
+                updateStatus('⚙️', 'Initializing engine...', 25);
 
                 await ffmpeg.load({
                     coreURL: coreBlob,
-                    wasmURL: wasmBlob,
-                    classWorkerURL: workerBlob
+                    wasmURL: wasmBlob
                 });
 
                 console.log('[MERGE_PAGE] FFmpeg loaded successfully');
+                ffmpegInstance = ffmpeg;
+                updateStatus('✅', 'FFmpeg ready!', 30);
+                return ffmpeg;
             } catch (err) {
                 console.error('[MERGE_PAGE] FFmpeg load error:', err);
-                updateStatus('❌', 'Load Error: ' + err.message, 0);
+                updateStatus('❌', 'Error: ' + err.message, 0);
+                $('#status').classList.add('error');
                 throw err;
             }
-
-            ffmpegInstance = ffmpeg;
-            updateStatus('✅', 'FFmpeg loaded!', 30);
-            return ffmpeg;
         }
 
         async function mergeVideos(clip1Base64, clip2Base64) {
