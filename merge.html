@@ -116,11 +116,9 @@
         </p>
     </div>
 
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
-    <script>
-        const { FFmpeg } = FFmpegWASM;
-        const { fetchFile, toBlobURL } = FFmpegUtil;
+    <script type="module">
+        import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+        import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
 
         const $ = (sel) => document.querySelector(sel);
 
@@ -146,13 +144,29 @@
             });
 
             try {
-                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+                const workerURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js';
+
+                console.log('[MERGE_PAGE] Fetching core files as Blobs...');
+
+                const [coreBlob, wasmBlob, workerBlob] = await Promise.all([
+                    toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    toBlobURL(workerURL, 'text/javascript')
+                ]);
+
+                console.log('[MERGE_PAGE] Core files fetched. Loading FFmpeg...');
+
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    coreURL: coreBlob,
+                    wasmURL: wasmBlob,
+                    workerURL: workerBlob
                 });
+
+                console.log('[MERGE_PAGE] FFmpeg loaded successfully');
             } catch (err) {
                 console.error('[MERGE_PAGE] FFmpeg load error:', err);
+                updateStatus('❌', 'Load Error: ' + err.message, 0);
                 throw err;
             }
 
@@ -166,7 +180,6 @@
 
             updateStatus('📂', 'Preparing videos...', 40);
 
-            // Convert base64 to ArrayBuffer
             const blob1 = await (await fetch(clip1Base64)).blob();
             const blob2 = await (await fetch(clip2Base64)).blob();
 
@@ -176,25 +189,18 @@
             await ffmpeg.writeFile('input0.mp4', await fetchFile(blob1));
             await ffmpeg.writeFile('input1.mp4', await fetchFile(blob2));
 
-            // Create concat list
             const list = 'file input0.mp4\nfile input1.mp4';
             await ffmpeg.writeFile('list.txt', new TextEncoder().encode(list));
 
             updateStatus('🔄', 'Merging videos...', 50);
 
-            // Concat with copy codec (fast, no re-encode)
             await ffmpeg.exec([
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', 'list.txt',
-                '-c', 'copy',
-                '-movflags', '+faststart',
-                'output.mp4'
+                '-f', 'concat', '-safe', '0', '-i', 'list.txt',
+                '-c', 'copy', '-movflags', '+faststart', 'output.mp4'
             ]);
 
             const data = await ffmpeg.readFile('output.mp4');
 
-            // Cleanup
             await ffmpeg.deleteFile('input0.mp4');
             await ffmpeg.deleteFile('input1.mp4');
             await ffmpeg.deleteFile('list.txt');
@@ -205,7 +211,6 @@
             const outputBlob = new Blob([new Uint8Array(data.buffer)], { type: 'video/mp4' });
             console.log(`Merged: ${(outputBlob.size / 1024 / 1024).toFixed(2)} MB`);
 
-            // Convert to base64 for sending back to extension
             const base64 = await new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(outputBlob);
@@ -215,11 +220,9 @@
             return base64;
         }
 
-        // Listen for messages from extension (via content script bridge)
         window.addEventListener('message', async (event) => {
             if (event.data?.type === 'BRIDGE_READY') {
-                // Bridge is asking for ready signal
-                console.log('[MERGE_PAGE] Bridge ready, sending page ready signal...');
+                console.log('[MERGE_PAGE] Bridge ready!');
                 window.postMessage({ type: 'MERGE_PAGE_READY' }, '*');
             }
 
@@ -230,34 +233,17 @@
                 try {
                     const result = await mergeVideos(clip1Base64, clip2Base64);
                     updateStatus('✅', 'Merge complete!', 100);
-
-                    // Send result back
-                    window.postMessage({
-                        type: 'MERGE_RESPONSE',
-                        requestId,
-                        ok: true,
-                        dataURL: result
-                    }, '*');
-
-                    // Auto-close after delay
+                    window.postMessage({ type: 'MERGE_RESPONSE', requestId, ok: true, dataURL: result }, '*');
                     setTimeout(() => window.close(), 3000);
-
                 } catch (error) {
                     console.error('[MERGE_PAGE] Error:', error);
                     updateStatus('❌', 'Error: ' + error.message, 0);
                     $('#status').classList.add('error');
-
-                    window.postMessage({
-                        type: 'MERGE_RESPONSE',
-                        requestId,
-                        ok: false,
-                        error: error.message
-                    }, '*');
+                    window.postMessage({ type: 'MERGE_RESPONSE', requestId, ok: false, error: error.message }, '*');
                 }
             }
         });
 
-        // Signal that page is ready (initial)
         updateStatus('👍', 'Ready! Waiting for merge request...', 5);
         window.postMessage({ type: 'MERGE_PAGE_READY' }, '*');
         console.log('[MERGE_PAGE] Initialized and ready');
