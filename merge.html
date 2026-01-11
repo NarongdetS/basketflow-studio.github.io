@@ -210,6 +210,12 @@
 
         // Listen for messages from extension (via content script bridge)
         window.addEventListener('message', async (event) => {
+            if (event.data?.type === 'BRIDGE_READY') {
+                // Bridge is asking for ready signal
+                console.log('[MERGE_PAGE] Bridge ready, sending page ready signal...');
+                window.postMessage({ type: 'MERGE_PAGE_READY' }, '*');
+            }
+
             if (event.data?.type === 'MERGE_REQUEST') {
                 const { requestId, clip1Base64, clip2Base64 } = event.data;
                 console.log('[MERGE_PAGE] Received merge request:', requestId);
@@ -244,7 +250,7 @@
             }
         });
 
-        // Signal that page is ready
+        // Signal that page is ready (initial)
         updateStatus('👍', 'Ready! Waiting for merge request...', 5);
         window.postMessage({ type: 'MERGE_PAGE_READY' }, '*');
         console.log('[MERGE_PAGE] Initialized and ready');
